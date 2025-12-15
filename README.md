@@ -1,32 +1,25 @@
 # Reviv - Django Web Interface
 
-A beautiful web interface for restoring old, low-quality images using the nano banana API.
-
-## Features
-
-- **Elegant Editorial Design** - Refined magazine-style aesthetics with vintage photography studio inspiration
-- **Drag & Drop Upload** - Easy image upload with preview
-- **Before/After Comparison** - Interactive slider to compare original and restored images
-- **Gallery View** - Showcase of all restored memories
-- **Responsive Design** - Works beautifully on all devices
+A web interface for restoring old, low-quality images using nano banana API.
 
 ## Setup
 
 1. Install dependencies:
 ```bash
-source .venv/bin/activate
-uv pip install django pillow replicate python-dotenv
+uv venv
+uv sync
 ```
 
 2. Set up environment variables:
 Create a `.env` file in the root directory with:
-```
-REPLICATE_API_TOKEN=your_token_here
+```bash
+touch .env
+echo 'REPLICATE_API_TOKEN=your_token_here' >> .env
 ```
 
 3. Run migrations:
 ```bash
-cd config
+cd reviv
 uv run manage.py migrate
 ```
 
@@ -45,7 +38,7 @@ uv run manage.py runserver
 ## Project Structure
 
 ```
-config/
+reviv/
 ├── config/          # Django project settings
 ├── reviv/           # Main application
 │   ├── models.py    # PhotoRestoration model
@@ -59,21 +52,9 @@ config/
 
 ## Usage
 
-1. Navigate to the home page
-2. Upload an old or damaged photo
-3. Optionally customize the restoration prompt
-4. Click "Restore Photo" and wait for processing
-5. View the before/after comparison with an interactive slider
-6. Download the restored image
-
-## Design Philosophy
-
-The interface combines:
-- **Typography**: Crimson Pro (serif) for elegance + Epilogue (sans) for clarity
-- **Color Palette**: Warm sepia tones, deep charcoal, cream backgrounds
-- **Textures**: Subtle film grain and paper texture overlays
-- **Animations**: Smooth, sophisticated transitions
-- **Layout**: Asymmetric, editorial-style with generous whitespace
+1. Signup/login
+2. upload an image
+3. Download the result
 
 ## API Integration
 
