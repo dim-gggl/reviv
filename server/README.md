@@ -34,7 +34,7 @@ Django REST API backend for photo restoration using Google's Nano Banana Pro mod
 ### Install
 
 ```bash
-uv sync
+cd server && uv sync
 ```
 
 ### Environment
