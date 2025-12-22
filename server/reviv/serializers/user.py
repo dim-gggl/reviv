@@ -1,3 +1,5 @@
+"""DRF serializers for user and passkey models."""
+
 from rest_framework import serializers
 from reviv.models import User, Passkey
 

@@ -63,7 +63,10 @@ def _get_param_anywhere(request, name: str):
             return val
     except Exception:
         # Never leak parsing internals; fall through to the next source.
-        pass
+        print(f"=" * 20)
+        print("An error occurred while getting the parameter from the request data")
+        print(f"=" * 20)
+
 
     # Raw Django form POST
     # Last-resort: access the underlying Django HttpRequest to read form fields directly.
@@ -73,7 +76,9 @@ def _get_param_anywhere(request, name: str):
             return val
     except Exception:
         # Never leak parsing internals; fall through to the next source.
-        pass
+        print(f"=" * 20)
+        print("An error occurred while getting the parameter from the request data")
+        print(f"=" * 20)
 
     # If the param is missing from all sources, we return None and the caller decides how to respond.
     return None

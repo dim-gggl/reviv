@@ -1,3 +1,9 @@
+"""Passkey database model.
+
+This module stores WebAuthn credential metadata for passwordless user
+authentication (passkeys).
+"""
+
 from django.db import models
 from django.conf import settings
 
@@ -36,4 +42,5 @@ class Passkey(models.Model):
         ]
 
     def __str__(self):
+        """Return a human-readable representation of the passkey."""
         return f"{self.name} ({self.user.email})"

@@ -1,12 +1,21 @@
+"""Django management command to seed initial credit pack definitions.
+
+This command is intended for development/initial deployment and is idempotent:
+it uses ``get_or_create`` so running it multiple times will not duplicate rows.
+"""
+
 from django.core.management.base import BaseCommand
 
 from reviv.models import CreditPack
 
 
 class Command(BaseCommand):
+    """Create (or ensure existence of) default `CreditPack` rows."""
+
     help = "Create initial credit packs"
 
     def handle(self, *args, **options):
+        """Create default credit packs if they do not already exist."""
         packs = [
             {"sku": "pack_5", "credits": 5, "price_cents": 999, "active": True},
             {"sku": "pack_10", "credits": 10, "price_cents": 1499, "active": True},

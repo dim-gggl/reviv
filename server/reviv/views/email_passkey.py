@@ -11,10 +11,16 @@ from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from django_ratelimit.decorators import ratelimit
 
 from reviv.models import Passkey
 from reviv.utils import format_error
-from reviv.utils.webauthn import webauthn_bytes_to_json_bytes, webauthn_json_bytes_to_bytes
+from reviv.utils.webauthn import (
+    webauthn_bytes_to_json_bytes,
+    webauthn_json_bytes_to_bytes,
+    webauthn_pop_state,
+    webauthn_store_state,
+)
 
 User = get_user_model()
 
@@ -31,6 +37,7 @@ rp = PublicKeyCredentialRpEntity(id=rp_id, name="reviv.pics")
 server = Fido2Server(rp)
 
 
+@ratelimit(group="email_passkey_register_begin", key="ip", rate="5/m", block=True)
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def email_passkey_register_begin(request):
@@ -101,17 +108,17 @@ def email_passkey_register_begin(request):
         user_verification="preferred",
     )
 
-    # Store state in session for completion step
-    # SECURITY: The complete endpoint MUST verify webauthn_registration_user_id matches
-    # the user entity encoded in the WebAuthn challenge to prevent session hijacking
-    request.session["webauthn_registration_state"] = _urlsafe_b64encode(state)
-    request.session["webauthn_registration_user_id"] = user.id
+    registration_id = webauthn_store_state(
+        "register",
+        {"user_id": user.id, "state": state},
+    )
 
     options = cbor.decode(registration_data)
     challenge_b64 = _urlsafe_b64encode(options["challenge"])
     user_id_b64 = _urlsafe_b64encode(options["user"]["id"])
     return Response(
         {
+            "registration_id": registration_id,
             "challenge": webauthn_bytes_to_json_bytes(options["challenge"]),
             "challenge_b64": challenge_b64,
             "rp": options["rp"],
@@ -127,3 +134,96 @@ def email_passkey_register_begin(request):
             "authenticatorSelection": options.get("authenticatorSelection", {}),
         }
     )
+
+
+@ratelimit(group="email_passkey_register_complete", key="ip", rate="5/m", block=True)
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def email_passkey_register_complete(request):
+    registration_id = request.data.get("registration_id", "").strip()
+    if not registration_id:
+        return Response(
+            format_error(
+                code="registration_missing",
+                message="No registration in progress",
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    state_payload = webauthn_pop_state("register", registration_id)
+    if not state_payload:
+        return Response(
+            format_error(
+                code="registration_missing",
+                message="No registration in progress",
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    user_id = state_payload.get("user_id")
+    state = state_payload.get("state")
+    if not user_id or not state:
+        return Response(
+            format_error(
+                code="registration_missing",
+                message="No registration in progress",
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        user = User.objects.get(id=user_id)
+    except User.DoesNotExist:
+        return Response(
+            format_error(code="user_not_found", message="User not found"),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    credential_data = request.data.get("credential") or {}
+    if not credential_data:
+        return Response(
+            format_error(
+                code="missing_credential",
+                message="Missing credential data",
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    client_data_b64 = credential_data.get("clientDataJSON")
+    attestation_b64 = credential_data.get("attestationObject")
+    if not client_data_b64 or not attestation_b64:
+        return Response(
+            format_error(
+                code="missing_attestation",
+                message="Missing attestation data",
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    try:
+        client_data = webauthn_json_bytes_to_bytes(client_data_b64)
+        attestation_object = webauthn_json_bytes_to_bytes(attestation_b64)
+        auth_data = server.register_complete(
+            state=state,
+            client_data=client_data,
+            attestation_object=attestation_object,
+        )
+    except Exception as exc:
+        return Response(
+            format_error(
+                code="registration_failed",
+                message=str(exc),
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    device_name = request.data.get("name") or "Unnamed Device"
+    Passkey.objects.create(
+        user=user,
+        credential_id=_urlsafe_b64encode(auth_data.credential_id),
+        public_key=_urlsafe_b64encode(cbor.encode(auth_data.public_key)),
+        sign_count=auth_data.sign_count,
+        name=device_name,
+    )
+
+    return Response({"message": "Passkey registered successfully", "device_name": device_name})

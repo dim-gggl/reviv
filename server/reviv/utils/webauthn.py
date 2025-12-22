@@ -1,5 +1,29 @@
 import base64
+import secrets
 from typing import Any
+
+from django.core.cache import cache
+
+WEBAUTHN_STATE_TTL_SECONDS = 300
+WEBAUTHN_STATE_PREFIX = "reviv:webauthn"
+
+
+def _webauthn_state_key(flow: str, nonce: str) -> str:
+    return f"{WEBAUTHN_STATE_PREFIX}:{flow}:{nonce}"
+
+
+def webauthn_store_state(flow: str, payload: dict, ttl_seconds: int = WEBAUTHN_STATE_TTL_SECONDS) -> str:
+    nonce = secrets.token_urlsafe(32)
+    cache.set(_webauthn_state_key(flow, nonce), payload, timeout=ttl_seconds)
+    return nonce
+
+
+def webauthn_pop_state(flow: str, nonce: str) -> dict | None:
+    key = _webauthn_state_key(flow, nonce)
+    payload = cache.get(key)
+    if payload:
+        cache.delete(key)
+    return payload
 
 
 def webauthn_bytes_to_json_bytes(value: bytes) -> list[int]:
@@ -47,5 +71,3 @@ def webauthn_normalize_credential_id(value: Any) -> str:
         return base64.urlsafe_b64encode(raw).decode("utf-8")
 
     raise ValueError("Unsupported credential id value type")
-
-

@@ -1,3 +1,10 @@
+"""Restoration job database model.
+
+This module defines the `RestorationJob` model used to track the lifecycle of an
+image restoration request (upload -> processing -> completed/failed) and its
+unlock status.
+"""
+
 from django.db import models
 from django.conf import settings
 
@@ -73,9 +80,10 @@ class RestorationJob(models.Model):
         ]
 
     def __str__(self):
+        """Return a human-readable representation of the job."""
         return f"Job {self.id} - {self.status} ({self.user.email})"
 
     @property
     def is_unlocked(self):
-        """Check if job has been unlocked"""
+        """Return True if the job has been unlocked and a full image may be served."""
         return self.unlocked_at is not None

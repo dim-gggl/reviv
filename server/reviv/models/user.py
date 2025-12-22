@@ -1,3 +1,10 @@
+"""Custom user model used by the `reviv` Django app.
+
+The project enforces passwordless authentication (OAuth and/or passkeys). This
+module extends Django's `AbstractUser` to store OAuth identifiers and credit-
+related flags used by the product.
+"""
+
 from django.contrib.auth.models import AbstractUser
 from django.db import models
 from decimal import Decimal
@@ -48,4 +55,5 @@ class User(AbstractUser):
         super().save(*args, **kwargs)
 
     def __str__(self):
+        """Return a human-readable identifier for the user."""
         return self.email or self.username

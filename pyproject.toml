@@ -1,0 +1,8 @@
+# Monorepo root (client + server)
+#
+# The Python backend project is located in ./server and is managed by ./server/pyproject.toml.
+# Keep this root pyproject for editor/tool configuration only (no Python dependencies here).
+
+[tool.pyright]
+reportMissingImports = false
+reportMissingModuleSource = false

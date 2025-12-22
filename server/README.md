@@ -25,7 +25,7 @@ Django REST API backend for photo restoration using Google's Nano Banana Pro mod
 
 ### Prerequisites
 
-- Python 3.14+
+- Python 3.12+
 - Redis (Celery broker/result backend)
 - Cloudinary account
 - Stripe account
@@ -34,14 +34,20 @@ Django REST API backend for photo restoration using Google's Nano Banana Pro mod
 ### Install
 
 ```bash
-cd server && uv sync
+cd server
+uv venv
+source .venv/bin/activate
+uv sync
 ```
+
+All backend commands below are meant to be run from the `server/` directory (where the backend `pyproject.toml` lives).
 
 ### Environment
 
 Copy `.env.example` to `.env` and fill credentials:
 
 ```bash
+cd server
 cp .env.example .env
 ```
 
@@ -62,24 +68,28 @@ Required variables:
 ### Migrations
 
 ```bash
+cd server
 uv run manage.py migrate
 ```
 
 ### Create credit packs
 
 ```bash
+cd server
 uv run manage.py create_credit_packs
 ```
 
 ### Run server
 
 ```bash
+cd server
 uv run manage.py runserver
 ```
 
 ### Celery
 
 ```bash
+cd server
 uv run celery -A config worker -l info
 uv run celery -A config beat -l info
 ```
@@ -148,5 +158,6 @@ High-level steps:
 ## Tests
 
 ```bash
+cd server
 uv run manage.py test
 ```

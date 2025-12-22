@@ -1,3 +1,5 @@
+"""DRF serializers for credit packs and credit transactions."""
+
 from rest_framework import serializers
 from reviv.models import CreditPack, CreditTransaction
 
@@ -20,7 +22,7 @@ class CreditPackSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_price_dollars(self, obj):
-        """Convert cents to dollars"""
+        """Convert the pack price from cents to a display string in dollars."""
         return f"${obj.price_cents / 100:.2f}"
 
 
@@ -44,7 +46,7 @@ class PurchaseRequestSerializer(serializers.Serializer):
     sku = serializers.CharField(max_length=50)
 
     def validate_sku(self, value):
-        """Validate SKU exists and is active"""
+        """Validate that the requested SKU exists and the pack is active."""
         try:
             pack = CreditPack.objects.get(sku=value, active=True)
         except CreditPack.DoesNotExist:

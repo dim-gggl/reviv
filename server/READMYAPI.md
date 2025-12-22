@@ -25,19 +25,15 @@ Most endpoints require an **access JWT**:
 Some auth flows also use:
 
 - **Refresh token**: returned as JSON in some endpoints, or stored as an **HttpOnly cookie** named `reviv_refresh` (recommended for browsers).
-- **Django session cookie**: used by the WebAuthn/passkey endpoints to persist the WebAuthn "state" between `begin` and `complete`.
+- **WebAuthn state nonce**: returned by `begin` endpoints (`registration_id` or `authentication_id`) and required by the matching `complete` endpoint.
 
 #### When you must send cookies
 
-For the following endpoints, your frontend must send cookies (credentials) so the backend can read/write the session and/or refresh cookie:
+For the following endpoints, your frontend must send cookies (credentials) so the backend can read/write the refresh cookie:
 
 - `POST /api/auth/oauth/exchange/` (sets `reviv_refresh`)
 - `POST /api/auth/token/refresh/` (reads `reviv_refresh` if present)
-- `POST /api/auth/passkey/register/begin/` (writes session state)
-- `POST /api/auth/passkey/register/complete/` (reads session state)
-- `POST /api/auth/passkey/login/begin/` (writes session state)
-- `POST /api/auth/passkey/login/complete/` (reads session state)
-- `POST /api/auth/email-passkey/register/begin/` (writes session state)
+None of the WebAuthn/passkey endpoints require cookies; they rely on the `registration_id` / `authentication_id` returned by the `begin` step.
 
 **Fetch example (browser):**
 
@@ -255,8 +251,8 @@ These endpoints are a minimal WebAuthn API:
 - `complete` consumes the browser credential response
 
 Important:
-- The backend stores the WebAuthn state in the **Django session**.
-- Your frontend must keep cookies between `begin` and `complete` (`credentials: "include"`).
+- The backend stores WebAuthn state in cache and returns a short-lived nonce.
+- Your frontend must send `registration_id` / `authentication_id` back to the matching `complete` endpoint.
 
 ### Register passkey (for already authenticated users)
 
@@ -264,12 +260,12 @@ Important:
 
 Auth:
 - `Authorization: Bearer <access>`
-- Cookies required (session)
 
 Response: `200 OK`
 
 ```json
 {
+  "registration_id": "<nonce>",
   "challenge": [0, 1, 2],
   "challenge_b64": "<base64url>",
   "rp": { "id": "localhost", "name": "reviv.pics" },
@@ -300,6 +296,7 @@ Body (JSON):
 ```json
 {
   "name": "My MacBook",
+  "registration_id": "<nonce>",
   "credential": {
     "clientDataJSON": "<base64url>",
     "attestationObject": "<base64url>"
@@ -319,12 +316,11 @@ Response: `200 OK`
 
 Auth: none
 
-Cookies required (session)
-
 Response: `200 OK`
 
 ```json
 {
+  "authentication_id": "<nonce>",
   "challenge": [0, 1, 2],
   "challenge_b64": "<base64url>",
   "timeout": 60000,
@@ -347,8 +343,12 @@ Body (JSON):
 
 ```json
 {
+  "authentication_id": "<nonce>",
   "credential": {
-    "id": "<base64url_credential_id>"
+    "id": "<base64url_credential_id>",
+    "clientDataJSON": "<base64url>",
+    "authenticatorData": "<base64url>",
+    "signature": "<base64url>"
   }
 }
 ```
@@ -365,15 +365,13 @@ Response: `200 OK`
 
 ---
 
-## Email-passkey (start registration)
+## Email-passkey (registration)
 
 #### `POST /api/auth/email-passkey/register/begin/`
 
 Starts passkey registration for an email-only user (no OAuth).
 
 Auth: none
-
-Cookies required (session)
 
 Body (JSON):
 
@@ -382,11 +380,34 @@ Body (JSON):
 ```
 
 Response: `200 OK`
-- Same shape as `passkey/register/begin` (challenge + rp + user + params)
+- Same shape as `passkey/register/begin` (includes `registration_id`)
 
 Notes:
 - If the user already exists and has `oauth_provider`, the endpoint returns `400` (`OAUTH_USER_EXISTS`).
-- In this repository, only the `begin` endpoint is routed for email-passkey (no public `complete` route under `email-passkey/...`).
+
+#### `POST /api/auth/email-passkey/register/complete/`
+
+Finalize email-only passkey registration.
+
+Auth: none
+
+Body (JSON):
+
+```json
+{
+  "registration_id": "<nonce>",
+  "credential": {
+    "clientDataJSON": "<base64url>",
+    "attestationObject": "<base64url>"
+  }
+}
+```
+
+Response: `200 OK`
+
+```json
+{ "message": "Passkey registered successfully", "device_name": "Unnamed Device" }
+```
 
 ---
 
@@ -653,5 +674,3 @@ export async function api<T>(
   return data as T;
 }
 ```
-
-

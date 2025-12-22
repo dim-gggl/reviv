@@ -1,11 +1,11 @@
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from django.test import TestCase
 from rest_framework.test import APIClient
 from rest_framework import status
 from fido2 import cbor
 
-from reviv.models import User
+from reviv.models import Passkey, User
 
 
 class EmailPasskeyRegistrationTest(TestCase):
@@ -112,3 +112,29 @@ class EmailPasskeyRegistrationTest(TestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(response.data["error"]["code"], "OAUTH_USER_EXISTS")
+
+    @patch("reviv.views.email_passkey.webauthn_pop_state")
+    @patch("reviv.views.email_passkey.server")
+    def test_email_passkey_register_complete_creates_passkey(self, mock_server, mock_pop_state):
+        user = User.objects.create(email="new@example.com", username="new@example.com")
+        mock_pop_state.return_value = {"user_id": user.id, "state": b"state"}
+        mock_server.register_complete.return_value = Mock(
+            credential_id=b"cred",
+            public_key={"kty": "EC"},
+            sign_count=1,
+        )
+
+        response = self.client.post(
+            "/api/auth/email-passkey/register/complete/",
+            {
+                "registration_id": "reg_nonce",
+                "credential": {
+                    "clientDataJSON": [1],
+                    "attestationObject": [2],
+                },
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(Passkey.objects.filter(user=user).exists())

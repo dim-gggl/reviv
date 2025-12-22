@@ -4,13 +4,22 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 from fido2 import cbor
+from fido2.cose import CoseKey
 from fido2.server import Fido2Server
-from fido2.webauthn import PublicKeyCredentialRpEntity, PublicKeyCredentialUserEntity
+from fido2.utils import websafe_encode
+from fido2.webauthn import (
+    Aaguid,
+    AttestedCredentialData,
+    AuthenticatorData,
+    PublicKeyCredentialRpEntity,
+    PublicKeyCredentialUserEntity,
+)
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
+from django_ratelimit.decorators import ratelimit
 
 from reviv.models import Passkey
 from reviv.serializers import UserSerializer
@@ -19,6 +28,8 @@ from reviv.utils.webauthn import (
     webauthn_bytes_to_json_bytes,
     webauthn_json_bytes_to_bytes,
     webauthn_normalize_credential_id,
+    webauthn_pop_state,
+    webauthn_store_state,
 )
 
 User = get_user_model()
@@ -41,6 +52,15 @@ rp = PublicKeyCredentialRpEntity(id=rp_id, name="reviv.pics")
 server = Fido2Server(rp)
 
 
+def _build_attested_credential(passkey: Passkey) -> AttestedCredentialData:
+    credential_id = webauthn_json_bytes_to_bytes(passkey.credential_id)
+    public_key_raw = webauthn_json_bytes_to_bytes(passkey.public_key)
+    public_key = CoseKey.parse(cbor.decode(public_key_raw))
+    return AttestedCredentialData.create(Aaguid.NONE, credential_id, public_key)
+
+
+@ratelimit(group="passkey_register_begin", key="ip", rate="5/m", block=True)
+@ratelimit(group="passkey_register_begin", key="user", rate="5/m", block=True)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def passkey_register_begin(request):
@@ -65,13 +85,17 @@ def passkey_register_begin(request):
         user_verification="preferred",
     )
 
-    request.session["webauthn_registration_state"] = _urlsafe_b64encode(state)
+    registration_id = webauthn_store_state(
+        "register",
+        {"user_id": user.id, "state": state},
+    )
 
     options = cbor.decode(registration_data)
     challenge_b64 = _urlsafe_b64encode(options["challenge"])
     user_id_b64 = _urlsafe_b64encode(options["user"]["id"])
     return Response(
         {
+            "registration_id": registration_id,
             "challenge": webauthn_bytes_to_json_bytes(options["challenge"]),
             "challenge_b64": challenge_b64,
             "rp": options["rp"],
@@ -89,15 +113,47 @@ def passkey_register_begin(request):
     )
 
 
+@ratelimit(group="passkey_register_complete", key="ip", rate="5/m", block=True)
+@ratelimit(group="passkey_register_complete", key="user", rate="5/m", block=True)
 @api_view(["POST"])
 @permission_classes([IsAuthenticated])
 def passkey_register_complete(request):
-    state_b64 = request.session.get("webauthn_registration_state")
-    if not state_b64:
+    registration_id = request.data.get("registration_id", "").strip()
+    if not registration_id:
         return Response(
             format_error(
                 code="registration_missing",
                 message="No registration in progress",
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    state_payload = webauthn_pop_state("register", registration_id)
+    if not state_payload:
+        return Response(
+            format_error(
+                code="registration_missing",
+                message="No registration in progress",
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    state = state_payload.get("state")
+    user_id = state_payload.get("user_id")
+    if not state or not user_id:
+        return Response(
+            format_error(
+                code="registration_missing",
+                message="No registration in progress",
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if int(user_id) != int(request.user.id):
+        return Response(
+            format_error(
+                code="registration_mismatch",
+                message="Registration does not match authenticated user",
             ),
             status=status.HTTP_400_BAD_REQUEST,
         )
@@ -124,7 +180,6 @@ def passkey_register_complete(request):
         )
 
     try:
-        state = _urlsafe_b64decode(state_b64)
         client_data = webauthn_json_bytes_to_bytes(client_data_b64)
         attestation_object = webauthn_json_bytes_to_bytes(attestation_b64)
         auth_data = server.register_complete(
@@ -149,11 +204,11 @@ def passkey_register_complete(request):
         sign_count=auth_data.sign_count,
         name=device_name,
     )
-    request.session.pop("webauthn_registration_state", None)
 
     return Response({"message": "Passkey registered successfully", "device_name": device_name})
 
 
+@ratelimit(group="passkey_login_begin", key="ip", rate="10/m", block=True)
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def passkey_login_begin(request):
@@ -170,7 +225,10 @@ def passkey_login_begin(request):
         user_verification="preferred",
     )
 
-    request.session["webauthn_auth_state"] = _urlsafe_b64encode(state)
+    authentication_id = webauthn_store_state(
+        "login",
+        {"state": state},
+    )
 
     options = cbor.decode(auth_data)
     challenge_b64 = _urlsafe_b64encode(options["challenge"])
@@ -185,6 +243,7 @@ def passkey_login_begin(request):
 
     return Response(
         {
+            "authentication_id": authentication_id,
             "challenge": webauthn_bytes_to_json_bytes(options["challenge"]),
             "challenge_b64": challenge_b64,
             "timeout": options.get("timeout", 60000),
@@ -195,11 +254,32 @@ def passkey_login_begin(request):
     )
 
 
+@ratelimit(group="passkey_login_complete", key="ip", rate="10/m", block=True)
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def passkey_login_complete(request):
-    state_b64 = request.session.get("webauthn_auth_state")
-    if not state_b64:
+    authentication_id = request.data.get("authentication_id", "").strip()
+    if not authentication_id:
+        return Response(
+            format_error(
+                code="auth_missing",
+                message="No authentication in progress",
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    state_payload = webauthn_pop_state("login", authentication_id)
+    if not state_payload:
+        return Response(
+            format_error(
+                code="auth_missing",
+                message="No authentication in progress",
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    state = state_payload.get("state")
+    if not state:
         return Response(
             format_error(
                 code="auth_missing",
@@ -228,6 +308,18 @@ def passkey_login_complete(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    client_data_b64 = credential_data.get("clientDataJSON")
+    auth_data_b64 = credential_data.get("authenticatorData")
+    signature_b64 = credential_data.get("signature")
+    if not client_data_b64 or not auth_data_b64 or not signature_b64:
+        return Response(
+            format_error(
+                code="auth_failed",
+                message="Missing assertion data",
+            ),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     try:
         credential_id_normalized = webauthn_normalize_credential_id(credential_id_b64)
     except Exception as exc:
@@ -244,12 +336,41 @@ def passkey_login_complete(request):
             status=status.HTTP_400_BAD_REQUEST,
         )
 
+    try:
+        client_data = webauthn_json_bytes_to_bytes(client_data_b64)
+        auth_data = webauthn_json_bytes_to_bytes(auth_data_b64)
+        signature = webauthn_json_bytes_to_bytes(signature_b64)
+        response_payload = {
+            "id": credential_id_normalized,
+            "rawId": credential_id_normalized,
+            "type": "public-key",
+            "response": {
+                "clientDataJSON": websafe_encode(client_data),
+                "authenticatorData": websafe_encode(auth_data),
+                "signature": websafe_encode(signature),
+            },
+        }
+        credential = _build_attested_credential(passkey)
+        server.authenticate_complete(state, [credential], response_payload)
+        auth_data_obj = AuthenticatorData(auth_data)
+    except Exception as exc:
+        return Response(
+            format_error(code="auth_failed", message=str(exc)),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    new_sign_count = auth_data_obj.counter
+    if new_sign_count <= passkey.sign_count:
+        return Response(
+            format_error(code="replay_detected", message="Replay detected"),
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     passkey.last_used_at = timezone.now()
-    passkey.sign_count += 1
+    passkey.sign_count = new_sign_count
     passkey.save(update_fields=["last_used_at", "sign_count"])
 
     refresh = RefreshToken.for_user(passkey.user)
-    request.session.pop("webauthn_auth_state", None)
 
     return Response(
         {

@@ -1,9 +1,18 @@
+"""DRF serializers for image restoration workflows.
+
+This module includes:
+- a custom `ImageField` for consistent upload error messages
+- serializers for upload requests, job representation, and status polling
+"""
+
 from PIL import Image, UnidentifiedImageError
 from rest_framework import serializers
 from reviv.models import RestorationJob
 
 
 class RestorationImageField(serializers.ImageField):
+    """ImageField with project-specific, stable validation error messages."""
+
     default_error_messages = {
         "invalid_image": "Invalid image file",
     }
@@ -51,7 +60,7 @@ class RestorationUploadSerializer(serializers.Serializer):
     )
 
     def validate_image(self, value):
-        """Validate image file"""
+        """Validate the uploaded image file (size, format, and dimensions)."""
         # Check file size (max 10MB)
         if value.size > 10 * 1024 * 1024:
             raise serializers.ValidationError("File must be under 10MB")

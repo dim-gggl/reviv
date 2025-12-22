@@ -1,3 +1,9 @@
+"""Credit-related database models.
+
+This module defines purchasable credit packs and the transaction ledger that
+tracks credit purchases, consumption (unlocks), and refunds.
+"""
+
 from django.db import models
 from django.conf import settings
 
@@ -26,6 +32,7 @@ class CreditPack(models.Model):
         ordering = ['credits']
 
     def __str__(self):
+        """Return a human-readable representation of the pack."""
         return f"{self.sku} - {self.credits} credits ({self.price_cents/100:.2f}€)"
 
 
@@ -75,4 +82,5 @@ class CreditTransaction(models.Model):
         ]
 
     def __str__(self):
+        """Return a human-readable representation of the transaction."""
         return f"{self.transaction_type} - {self.amount} credits ({self.user.email})"
